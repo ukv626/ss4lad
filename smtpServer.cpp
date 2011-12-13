@@ -8,16 +8,15 @@
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 
-#include <cstdlib>
 #include <cstdio>
 #include <iostream>
 #include <fstream>
 #include <boost/bind.hpp>
 #include <boost/asio.hpp>
-
-//#include "client45000.h"
+#include <boost/program_options.hpp>
 
 using boost::asio::ip::tcp;
+namespace po = boost::program_options;
 
 class session
 {
@@ -176,16 +175,24 @@ int main(int argc, char* argv[])
 {
   try
   {
-    if (argc != 2)
-    {
-      std::cerr << "Usage: " << argv[0] << " <port>\n";
+    // Declare the supported options.
+    po::options_description desc("Allowed options");
+    desc.add_options()
+      ("port,p", po::value<int>(), "set port for listening")
+      ("help", "show this information")
+      ;
+
+    po::variables_map vm;
+    po::store(po::parse_command_line(argc, argv, desc), vm);
+    po::notify(vm);    
+
+    if (vm.count("help") || !vm.count("port")) {
+      std::cout << desc << "\n";
       return 1;
     }
 
     boost::asio::io_service io_service;
-
-    using namespace std; // For atoi.
-    server s(io_service, atoi(argv[1]));
+    server s(io_service, vm["port"].as<int>());
 
     io_service.run();
   }
