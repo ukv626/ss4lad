@@ -9,6 +9,7 @@
 //
 
 #include <cstdlib>
+#include <cstdio>
 #include <iostream>
 #include <fstream>
 #include <boost/bind.hpp>
@@ -22,7 +23,7 @@ class session
 {
 public:
   session(boost::asio::io_service& io_service)
-    : socket_(io_service), isData_(false)
+    : socket_(io_service), isData_(false), isQuit_(false)
 
   {
   }
@@ -53,13 +54,18 @@ public:
       if(isData_) {
 	response_stream << "250 769947 message accepted for delivery\n";
 	// save data
-	std::ofstream outfile( "mail.txt", std::ios::out | std::ios::binary);
-	if (response_.size() > 0)
-	  outfile << &request_;
-	outfile.close();
+	char *uniqname = strdup("./spool/msg.XXXXXX");
+	mkstemp(uniqname);
+	
+	std::ofstream outfile(uniqname, std::ios::out | std::ios::binary);
+	if(outfile) {
+	  if (response_.size() > 0)
+	    outfile << &request_;
+	  outfile.close();
+	}
 
 	// send notice like ADM-CID
-	system("./sendNotice localhost 45000");
+	// system("./sendNotice localhost 45000");
 
 	isData_ = false;
 	boost::asio::async_write(socket_, response_,
@@ -67,37 +73,33 @@ public:
 		       boost::asio::placeholders::error));
       }
       else {
+	std::string cmd;
+	request_stream >> cmd;
 	std::getline(request_stream, message);
-	const size_t found = message.find("DATA");
-	if (found!=std::string::npos) {
-
+	std::cout << cmd << message << std::endl;
+	
+	if(cmd=="HELO" ||
+	   cmd=="EHLO" ||
+	   cmd=="MAIL" ||
+	   cmd=="RCPT" ||
+	   cmd=="NOOP") {
+	  response_stream << "250 OK\n";
+	}
+	else if(cmd=="DATA") {
 	  isData_ = true;
 	  response_stream << "354 Enter mail, end with \".\" on a line by itself\n";
-	  boost::asio::async_write(socket_, response_,
-		boost::bind(&session::handle_write_data, this,
-			boost::asio::placeholders::error));
 	}
-	else {
-	  response_stream << "250 OK\n";
-	  boost::asio::async_write(socket_, response_,
+	else if(cmd=="QUIT") {
+	  isQuit_ = true;
+	  response_stream << "221 ukvpc.itandem.ru SMTP closing connection\n";
+	}
+	else
+	  response_stream << "599 Unknown command\n";
+
+	boost::asio::async_write(socket_, response_,
 		boost::bind(&session::handle_write, this,
 			boost::asio::placeholders::error));
-	}
       }
-    }
-    else
-    {
-      delete this;
-    }
-  }
-
-  void handle_write_data(const boost::system::error_code& error)
-  {
-    if (!error)
-    {
-      boost::asio::async_read_until(socket_, request_, "\r\n.\r\n",
-	boost::bind(&session::handle_read, this,
-		    boost::asio::placeholders::error));
     }
     else
     {
@@ -109,9 +111,20 @@ public:
   {
     if (!error)
     {
-      boost::asio::async_read_until(socket_, request_, "\r\n",
-	boost::bind(&session::handle_read, this,
-		    boost::asio::placeholders::error));
+      if(isQuit_) {
+	socket_.close();
+	delete this;
+      }
+      else {
+	if(isData_)
+	  boost::asio::async_read_until(socket_, request_, "\r\n.\r\n",
+					boost::bind(&session::handle_read, this,
+						    boost::asio::placeholders::error));
+	else
+	  boost::asio::async_read_until(socket_, request_, "\r\n",
+					boost::bind(&session::handle_read, this,
+						    boost::asio::placeholders::error));
+      }
     }
     else
     {
@@ -124,6 +137,7 @@ private:
   boost::asio::streambuf request_;
   boost::asio::streambuf response_;
   bool isData_;
+  bool isQuit_;
 };
 
 class server
@@ -167,7 +181,7 @@ int main(int argc, char* argv[])
   {
     if (argc != 2)
     {
-      std::cerr << "Usage: async_tcp_echo_server <port>\n";
+      std::cerr << "Usage:" << argv[0] << "<port>\n";
       return 1;
     }
 
