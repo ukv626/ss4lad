@@ -68,9 +68,6 @@ public:
 	// system("./sendNotice localhost 45000");
 
 	isData_ = false;
-	boost::asio::async_write(socket_, response_,
-		boost::bind(&session::handle_write, this,
-		       boost::asio::placeholders::error));
       }
       else {
 	std::string cmd;
@@ -95,11 +92,11 @@ public:
 	}
 	else
 	  response_stream << "599 Unknown command\n";
-
-	boost::asio::async_write(socket_, response_,
-		boost::bind(&session::handle_write, this,
-			boost::asio::placeholders::error));
       }
+      
+      boost::asio::async_write(socket_, response_,
+	boost::bind(&session::handle_write, this,
+		boost::asio::placeholders::error));
     }
     else
     {
@@ -181,7 +178,7 @@ int main(int argc, char* argv[])
   {
     if (argc != 2)
     {
-      std::cerr << "Usage:" << argv[0] << "<port>\n";
+      std::cerr << "Usage: " << argv[0] << " <port>\n";
       return 1;
     }
 
