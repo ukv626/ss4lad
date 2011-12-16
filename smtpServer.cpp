@@ -53,8 +53,8 @@ public:
       if(isData_) {
 	response_stream << "250 769947 message accepted for delivery\n";
 	// save data
-	char *uniqname = strdup("./spool/msg.XXXXXX");
-	mkstemp(uniqname);
+	char *uniqname = strdup("spool/XXXXXX.eml");
+	mkstemps(uniqname, 4);
 	
 	std::ofstream outfile(uniqname, std::ios::out | std::ios::binary);
 	if(outfile) {
@@ -64,7 +64,9 @@ public:
 	}
 
 	// send notice like ADM-CID
-	// system("./sendNotice localhost 45000");
+	std::string cmd("./sendNotice localhost 45000 ");
+	cmd += uniqname;
+	system(cmd.c_str());
 
 	isData_ = false;
       }
