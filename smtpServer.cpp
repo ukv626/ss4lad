@@ -14,6 +14,7 @@
 #include <boost/bind.hpp>
 #include <boost/asio.hpp>
 #include <boost/program_options.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
 
 using boost::asio::ip::tcp;
 namespace po = boost::program_options;
@@ -23,8 +24,19 @@ class session
 public:
   session(boost::asio::io_service& io_service)
     : socket_(io_service), isData_(false), isQuit_(false)
-
   {
+  }
+
+  ~session()
+  {
+    if(logfile_) {
+      boost::posix_time::ptime endTime = boost::posix_time::microsec_clock::local_time();
+      boost::posix_time::time_period tp(startTime_, endTime); 
+      logfile_ << endTime
+	       << " -- Close connection"
+	       << " [Duration " << tp.length() << "] --------\n\n";
+      logfile_.close();
+    }
   }
 
   tcp::socket& socket()
@@ -34,6 +46,16 @@ public:
 
   void start()
   {
+    startTime_ = boost::posix_time::microsec_clock::local_time();
+    std::string s = socket_.remote_endpoint().address().to_string();
+    s.append(".log");
+    logfile_.open(s.c_str(), std::ios::out | std::ios::binary | std::ios::app);
+    if(logfile_) {
+      logfile_ << startTime_
+	       <<  " -- New connection -------------------------------------\n";
+      logfile_.flush();
+    }
+    
     std::ostream response_stream(&response_);
 
     response_stream << "220 ukvpc.itandem.ru SMTP is glad to see you!\n";
@@ -74,20 +96,24 @@ public:
 	std::string cmd;
 	request_stream >> cmd;
 	std::getline(request_stream, message);
-	std::cout << cmd << message << std::endl;
+	if(logfile_) {
+	  logfile_ << boost::posix_time::microsec_clock::local_time()
+		   << " " << cmd << message << std::endl;
+	  logfile_.flush();
+	}
 	
-	if(cmd=="HELO" ||
-	   cmd=="EHLO" ||
-	   cmd=="MAIL" ||
-	   cmd=="RCPT" ||
-	   cmd=="NOOP") {
+	if("HELO"==cmd ||
+	   "EHLO"==cmd ||
+	   "MAIL"==cmd ||
+	   "RCPT"==cmd ||
+	   "NOOP"==cmd) {
 	  response_stream << "250 OK\n";
 	}
-	else if(cmd=="DATA") {
+	else if("DATA"==cmd) {
 	  isData_ = true;
 	  response_stream << "354 Enter mail, end with \".\" on a line by itself\n";
 	}
-	else if(cmd=="QUIT") {
+	else if("QUIT"==cmd) {
 	  isQuit_ = true;
 	  response_stream << "221 ukvpc.itandem.ru SMTP closing connection\n";
 	}
@@ -114,14 +140,11 @@ public:
 	delete this;
       }
       else {
-	if(isData_)
-	  boost::asio::async_read_until(socket_, request_, "\r\n.\r\n",
-					boost::bind(&session::handle_read, this,
-						    boost::asio::placeholders::error));
-	else
-	  boost::asio::async_read_until(socket_, request_, "\r\n",
-					boost::bind(&session::handle_read, this,
-						    boost::asio::placeholders::error));
+	boost::asio::async_read_until(socket_,
+				      request_,
+				      isData_ ? "\r\n.\r\n" : "\r\n",
+				      boost::bind(&session::handle_read, this,
+						  boost::asio::placeholders::error));
       }
     }
     else
@@ -136,6 +159,8 @@ private:
   boost::asio::streambuf response_;
   bool isData_;
   bool isQuit_;
+  std::ofstream logfile_;
+  boost::posix_time::ptime startTime_;
 };
 
 class server
