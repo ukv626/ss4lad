@@ -2,11 +2,6 @@
 // async_tcp_echo_server.cpp
 // ~~~~~~~~~~~~~~~~~~~~~~~~~
 //
-// Copyright (c) 2003-2011 Christopher M. Kohlhoff (chris at kohlhoff dot com)
-//
-// Distributed under the Boost Software License, Version 1.0. (See accompanying
-// file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
-//
 
 #include <cstdio>
 #include <iostream>
@@ -15,6 +10,10 @@
 #include <boost/asio.hpp>
 #include <boost/program_options.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
+
+#include <signal.h>
+#include <syslog.h>
+#include <unistd.h>
 
 using boost::asio::ip::tcp;
 namespace po = boost::program_options;
@@ -47,9 +46,9 @@ private:
   void handle_connect(const boost::system::error_code& error)
   {
     if (!error) {
-      // Form the request. 
+      // The connection was successful. Send the request.
       std::ostream request_stream(&request_);
-      const char body[] = "0022\"NEW-MSG\"1000L0#";
+      const char body[] = "001C\"NEW-MSG\"1000L0#";
       
       request_stream << char(0x0A) << char(0xCE) << char(0x09)
 		     << body << filename_ << "[]" << char(0x0D);
@@ -58,7 +57,6 @@ private:
       timer_.async_wait(boost::bind(&notifier::handle_timeout, this,
 				   boost::asio::placeholders::error));
 
-      // The connection was successful. Send the request.
       boost::asio::async_write(socket_, request_,
 			       boost::bind(&notifier::handle_write, this,
 					   boost::asio::placeholders::error));
@@ -78,9 +76,6 @@ private:
   void handle_write(const boost::system::error_code& error)
   {
     if (!error) {
-      // Read the response status line. The response_ streambuf will
-      // automatically grow to accommodate the entire line. The growth may be
-      // limited by passing a maximum size to the streambuf constructor.
       boost::asio::async_read_until(socket_, response_, "\n", 
 				    boost::bind(&notifier::handle_read, this,
 						boost::asio::placeholders::error));
@@ -123,9 +118,9 @@ public:
 	  const std::string& notice_host, unsigned short notice_port)
     : socket_(io_service),
       timer_(io_service),
-      isData_(false), isQuit_(false),
       notice_host_(notice_host),
-      notice_port_(notice_port)
+      notice_port_(notice_port),
+      status_(WAIT)
   {
     std::cout << "session()\n";
   }
@@ -192,7 +187,7 @@ private:
       std::ostream response_stream(&response_);
       std::string message;
 
-      if(isData_) {
+      if(DATA==status_) {
 	response_stream << "250 769947 message accepted for delivery\n";
 	// save data
 	char *uniqname = strdup("spool/XXXXXX.eml");
@@ -207,10 +202,10 @@ private:
 
 	// send notice like ADM-CID
 	notifier *notifier_ = new notifier(socket_.io_service(),
-					   notice_host_, notice_port_, uniqname);
+					   notice_host_, notice_port_, uniqname + 6);
 	if(!notifier_) assert(false);
 	
-	isData_ = false;
+	status_ = WAIT;
       }
       else {
 	std::string cmd;
@@ -230,11 +225,11 @@ private:
 	  response_stream << "250 OK\n";
 	}
 	else if("DATA"==cmd) {
-	  isData_ = true;
+	  status_ = DATA;
 	  response_stream << "354 Enter mail, end with \".\" on a line by itself\n";
 	}
 	else if("QUIT"==cmd) {
-	  isQuit_ = true;
+	  status_ = QUIT;
 	  response_stream << "221 ukvpc.itandem.ru SMTP closing connection\n";
 	}
 	else
@@ -253,11 +248,11 @@ private:
   {
     if (!error)
     {
-      if(isQuit_)
+      if(QUIT==status_)
 	close();
       else
 	boost::asio::async_read_until(socket_,
-			request_, isData_ ? "\r\n.\r\n" : "\r\n",
+			request_, DATA==status_ ? "\r\n.\r\n" : "\r\n",
 		boost::bind(&session::handle_read, this,
 			boost::asio::placeholders::error));
     }
@@ -282,12 +277,12 @@ private:
   boost::asio::deadline_timer timer_;
   boost::asio::streambuf request_;
   boost::asio::streambuf response_;
-  bool isData_;
-  bool isQuit_;
   std::ofstream logfile_;
   boost::posix_time::ptime startTime_;
   std::string notice_host_;
   unsigned short notice_port_;
+  enum { WAIT, DATA, QUIT };
+  unsigned char status_;
 };
 
 class server
@@ -301,6 +296,8 @@ public:
       notice_host_(notice_host),
       notice_port_(notice_port)
   {
+    syslog(LOG_INFO, "Daemon started.");
+    
     session* new_session = new session(io_service_, notice_host_, notice_port_);
     acceptor_.async_accept(new_session->socket(),
         boost::bind(&server::handle_accept, this, new_session,
@@ -331,6 +328,12 @@ private:
   unsigned short notice_port_;
 };
 
+void signals_handler(int sig)
+{
+  syslog(LOG_INFO, "Daemon stopped.");
+  exit(0);
+}
+
 int main(int argc, char* argv[])
 {
   try
@@ -352,6 +355,13 @@ int main(int argc, char* argv[])
       std::cout << desc << "\n";
       return 1;
     }
+
+    // обратываем сигналы
+    struct sigaction act;
+    act.sa_handler = signals_handler;
+    sigemptyset(&act.sa_mask);
+    act.sa_flags = 0;
+    sigaction(SIGINT, &act, 0);
 
     boost::asio::io_service io_service;
     server s(io_service,
