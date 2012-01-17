@@ -14,6 +14,8 @@
 #include <signal.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/resource.h>
 
 using boost::asio::ip::tcp;
 namespace po = boost::program_options;
@@ -48,10 +50,10 @@ private:
     if (!error) {
       // The connection was successful. Send the request.
       std::ostream request_stream(&request_);
-      const char body[] = "001C\"NEW-MSG\"1000L0#";
+      const char body[] = "0021\"NEW-MSG\"1000L0#";
       
       request_stream << char(0x0A) << char(0xCE) << char(0x09)
-		     << body << filename_ << "[]" << char(0x0D);
+		     << body << filename_ << "[|0999]" << char(0x0D);
 
       timer_.expires_from_now(boost::posix_time::seconds(2));
       timer_.async_wait(boost::bind(&notifier::handle_timeout, this,
@@ -217,18 +219,18 @@ private:
 	  logfile_.flush();
 	}
 	
-	if("HELO"==cmd ||
-	   "EHLO"==cmd ||
-	   "MAIL"==cmd ||
-	   "RCPT"==cmd ||
-	   "NOOP"==cmd) {
+	if("HELO" == cmd ||
+	   "EHLO" == cmd ||
+	   "MAIL" == cmd ||
+	   "RCPT" == cmd ||
+	   "NOOP" == cmd) {
 	  response_stream << "250 OK\n";
 	}
-	else if("DATA"==cmd) {
+	else if("DATA" == cmd) {
 	  status_ = DATA;
 	  response_stream << "354 Enter mail, end with \".\" on a line by itself\n";
 	}
-	else if("QUIT"==cmd) {
+	else if("QUIT" == cmd) {
 	  status_ = QUIT;
 	  response_stream << "221 ukvpc.itandem.ru SMTP closing connection\n";
 	}
@@ -248,7 +250,7 @@ private:
   {
     if (!error)
     {
-      if(QUIT==status_)
+      if(QUIT == status_)
 	close();
       else
 	boost::asio::async_read_until(socket_,
@@ -296,8 +298,6 @@ public:
       notice_host_(notice_host),
       notice_port_(notice_port)
   {
-    syslog(LOG_INFO, "Daemon started.");
-    
     session* new_session = new session(io_service_, notice_host_, notice_port_);
     acceptor_.async_accept(new_session->socket(),
         boost::bind(&server::handle_accept, this, new_session,
@@ -331,7 +331,61 @@ private:
 void signals_handler(int sig)
 {
   syslog(LOG_INFO, "Daemon stopped.");
-  exit(0);
+  exit(EXIT_SUCCESS);
+}
+
+void daemonize()
+{
+  unsigned int i, fd0, fd1, fd2;
+  pid_t pid;
+  struct rlimit r1;
+
+  // сбросить маску режима создания файла
+  umask(0);
+
+  if(getrlimit(RLIMIT_NOFILE, &r1) < 0)
+    std::cerr << "Error: Невозможно получить максимальный номер дескриптора\n";
+
+  // стать лидером сессии чтобы утратить управляющий терминал
+  if((pid = fork()) < 0)
+    std::cerr << "Error: Ошибка вызова функции fork\n";
+  else if(pid != 0) /* родительский процесс*/
+    exit(EXIT_SUCCESS);
+  setsid();
+
+  // обеспечить невозможность обретения управляющего терминала в будущем
+  // обратываем сигналы
+  struct sigaction sa;
+  sa.sa_handler = signals_handler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+  if(sigaction(SIGHUP, &sa, NULL) < 0)
+    std::cerr << "Error: невозможно игнорировать сигнал SIGHUP\n";
+  if((pid = fork()) < 0)
+    std::cerr << "Error: Ошибка вызова функции fork\n";
+  else if(pid != 0) /* родительский процесс*/
+    exit(EXIT_SUCCESS);
+
+  // назначить корневой каталог текущим, чтобы впоследствии можно было
+  // отмонтировать файловую систему 
+  // if(chdir("/") < 0)
+  //   std::cerr << "Error: невозможно сделать текущим рабочим каталогом /\n";
+
+  // закрыть все открытые файловые дескрипторы
+  if(r1.rlim_max == RLIM_INFINITY)
+    r1.rlim_max = 1024;
+  for(i = 0; i < r1.rlim_max; ++i)
+    close(i);
+
+  // присоеденить файловые дескрипторы к /dev/null
+  fd0 = open("/dev/null", O_RDWR);
+  fd1 = dup(0);
+  fd2 = dup(0);
+
+  if(fd0 != 0 || fd1 != 1 || fd2 != 2) {
+    syslog(LOG_ERR, "Ошибочные файловые дескрипторы %d %d %d",fd0, fd1, fd2);
+    exit(EXIT_FAILURE);
+  }
 }
 
 int main(int argc, char* argv[])
@@ -356,12 +410,7 @@ int main(int argc, char* argv[])
       return 1;
     }
 
-    // обратываем сигналы
-    struct sigaction act;
-    act.sa_handler = signals_handler;
-    sigemptyset(&act.sa_mask);
-    act.sa_flags = 0;
-    sigaction(SIGINT, &act, 0);
+    daemonize();
 
     boost::asio::io_service io_service;
     server s(io_service,
@@ -369,6 +418,7 @@ int main(int argc, char* argv[])
 	     vm["notify-address"].as<std::string>(),
 	     vm["notify-port"].as<int>());
 
+    syslog(LOG_INFO, "Daemon started.");
     io_service.run();
   }
   catch (std::exception& e)
@@ -376,5 +426,5 @@ int main(int argc, char* argv[])
     std::cerr << "Exception: " << e.what() << "\n";
   }
 
-  return 0;
+  return EXIT_SUCCESS;
 }
