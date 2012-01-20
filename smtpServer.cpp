@@ -351,9 +351,9 @@ void daemonize()
     std::cerr << "Error: Ошибка вызова функции fork\n";
   else if(pid != 0) /* родительский процесс*/
     exit(EXIT_SUCCESS);
-  setsid();
 
-  // обеспечить невозможность обретения управляющего терминала в будущем
+  setsid();
+  
   // обратываем сигналы
   struct sigaction sa;
   sa.sa_handler = signals_handler;
@@ -361,10 +361,12 @@ void daemonize()
   sa.sa_flags = 0;
   if(sigaction(SIGHUP, &sa, NULL) < 0)
     std::cerr << "Error: невозможно игнорировать сигнал SIGHUP\n";
-  if((pid = fork()) < 0)
-    std::cerr << "Error: Ошибка вызова функции fork\n";
-  else if(pid != 0) /* родительский процесс*/
-    exit(EXIT_SUCCESS);
+
+  // обеспечить невозможность обретения управляющего терминала в будущем (System V)
+  // if((pid = fork()) < 0)
+  //   std::cerr << "Error: Ошибка вызова функции fork\n";
+  // else if(pid != 0) /* родительский процесс*/
+  //   exit(EXIT_SUCCESS);
 
   // назначить корневой каталог текущим, чтобы впоследствии можно было
   // отмонтировать файловую систему 
