@@ -9,7 +9,6 @@ public:
 	   const char* filename);
 
 private:
-  ~notifier();
   void handle_connect(const boost::system::error_code& error);
   void handle_write(const boost::system::error_code& error);
   void handle_read(const boost::system::error_code& error);

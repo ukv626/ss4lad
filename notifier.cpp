@@ -20,15 +20,8 @@ notifier::notifier(boost::asio::io_service& io_service,
 				      port),
 			boost::bind(&notifier::handle_connect,
 				    this, boost::asio::placeholders::error));
-    
-  std::cout << "notifier()\n";
 }
 
-notifier::~notifier()
-{
-  std::cout << "~notifier()\n";
-}
-  
 void notifier::handle_connect(const boost::system::error_code& error)
 {
   if (!error) {
@@ -45,26 +38,23 @@ void notifier::handle_connect(const boost::system::error_code& error)
 
     boost::asio::async_write(socket_, request_,
 			     boost::bind(&notifier::handle_write, this,
-					 boost::asio::placeholders::error));
+			     boost::asio::placeholders::error));
   }
   else {
-    std::ofstream logfile("notifier.err", std::ios::out | std::ios::app);
-    if(logfile) {
-      logfile << boost::posix_time::second_clock::local_time()
+    std::cerr << boost::posix_time::second_clock::local_time()
 	      << " " << filename_
 	      << " [can't connect to server]\n";
-      logfile.close();
-    }
     close();
   }
 }
+
 
 void notifier::handle_write(const boost::system::error_code& error)
 {
   if (!error) {
     boost::asio::async_read_until(socket_, response_, "\n", 
 				  boost::bind(&notifier::handle_read, this,
-					      boost::asio::placeholders::error));
+				  boost::asio::placeholders::error));
   }
   else
     close();
